@@ -9,6 +9,7 @@ const MUL = 'MUL';
 const DIV = 'DIV';
 const LPAREN = 'LPAREN';
 const RPAREN = 'RPAREN';
+const EOF = 'EOF';
 
 const DIGITS = new Set('0123456789'.split(''));
 const WHITESPACE = new Set(' \t'.split(''));
@@ -36,6 +37,12 @@ class IllegalCharacterError extends Error {
     }
 }
 
+class InvalidSyntaxError extends Error {
+    constructor(start, end, details = '') {
+        super(start, end, 'Invalid Syntax', details);
+    }
+}
+
 /*
 POSITION
 */
@@ -48,7 +55,7 @@ class Position {
         this.fileTxt = fileTxt;
     }
 
-    step(curr) {
+    step(curr = null) {
         this.idx++;
         this.col++;
 
@@ -75,9 +82,18 @@ class Position {
 TOKENS
 */
 class Token {
-    constructor(type, value = null) {
+    constructor(type, value = null, start = null, end = null) {
         this.type = type;
         this.value = value;
+        if (this.start !== null) {
+            this.start = start.copy();
+            this.end = start.copy();
+            this.end.step();
+        }
+
+        if (this.end !== null) {
+            this.end = end;
+        }
     }
 
     toString() {
@@ -113,12 +129,18 @@ class Lexer {
             if (DIGITS.has(this.curr)) {
                 tokens.push(this.parseNumber());
                 flag = false;
-            } else if (this.curr === '+') tokens.push(new Token(PLUS));
-            else if (this.curr === '-') tokens.push(new Token(MINUS));
-            else if (this.curr === '*') tokens.push(new Token(MUL));
-            else if (this.curr === '/') tokens.push(new Token(DIV));
-            else if (this.curr === '(') tokens.push(new Token(LPAREN));
-            else if (this.curr === ')') tokens.push(new Token(RPAREN));
+            } else if (this.curr === '+')
+                tokens.push(new Token(PLUS, null, this.pos));
+            else if (this.curr === '-')
+                tokens.push(new Token(MINUS, null, this.pos));
+            else if (this.curr === '*')
+                tokens.push(new Token(MUL, null, this.pos));
+            else if (this.curr === '/')
+                tokens.push(new Token(DIV, null, this.pos));
+            else if (this.curr === '(')
+                tokens.push(new Token(LPAREN, null, this.pos));
+            else if (this.curr === ')')
+                tokens.push(new Token(RPAREN, null, this.pos));
             else if (!WHITESPACE.has(this.curr)) {
                 let [c, start] = [this.curr, this.pos.copy()];
                 this.step();
@@ -131,11 +153,13 @@ class Lexer {
             if (flag) this.step();
         }
 
+        tokens.push(new Token(EOF, null, this.pos));
         return [tokens, null];
     }
 
     parseNumber() {
         let [num, dot] = [[], 0];
+        let start = this.pos.copy();
 
         while (this.curr && (this.curr === '.' || DIGITS.has(this.curr))) {
             if (this.curr === '.' && dot++) break;
@@ -143,8 +167,9 @@ class Lexer {
             this.step();
         }
 
-        if (!dot) return new Token(INT, parseInt(num.join(''), 10));
-        return new Token(FLOAT, parseFloat(num.join('')));
+        if (!dot)
+            return new Token(INT, parseInt(num.join(''), 10), start, this.pos);
+        return new Token(FLOAT, parseFloat(num.join('')), start, this.pos);
     }
 }
 
@@ -173,6 +198,45 @@ class BinaryOpNode {
     }
 }
 
+class UnaryOpNode {
+    constructor(op, node) {
+        this.op = op;
+        this.node = node;
+    }
+
+    toString() {
+        return `(${this.op}, ${this.node})`;
+    }
+}
+
+/*
+PARSE RESULT
+*/
+class ParseResult {
+    constructor() {
+        this.error = null;
+        this.node = null;
+    }
+
+    register(res) {
+        if (res instanceof ParseResult) {
+            if (res.error !== null) this.error = res.error;
+            return res.node;
+        }
+        return res;
+    }
+
+    success(node) {
+        this.node = node;
+        return this;
+    }
+
+    failure(error) {
+        this.error = error;
+        return this;
+    }
+}
+
 /*
 PARSER
 */
@@ -192,42 +256,86 @@ class Parser {
 
     parse() {
         let result = this.expr();
+        if (result.error === null && this.curr.type !== EOF)
+            return res.failure(
+                new InvalidSyntaxError(
+                    this.curr.start,
+                    this.curr.end,
+                    "'Expected '+', '-', '*' or '/'"
+                )
+            );
         return result;
     }
 
     term() {
-        let left = this.factor();
+        const res = new ParseResult();
+        let left = res.register(this.factor());
+        if (res.error !== null) return res;
 
         while (this.curr.type === MUL || this.curr.type === DIV) {
             let op = this.curr;
-            this.step();
-            let right = this.factor();
+            res.register(this.step());
+            let right = res.register(this.factor());
+            if (res.error !== null) return res;
             left = new BinaryOpNode(left, op, right);
         }
 
-        return left;
+        return res.success(left);
     }
 
     expr() {
-        let left = this.term();
+        const res = new ParseResult();
+        let left = res.register(this.term());
+        if (res.error !== null) return res;
 
         while (this.curr.type === PLUS || this.curr.type === MINUS) {
             let op = this.curr;
-            this.step();
-            let right = this.term();
+            res.register(this.step());
+            let right = res.register(this.term());
+            if (res.error !== null) return res;
             left = new BinaryOpNode(left, op, right);
         }
 
-        return left;
+        return res.success(left);
     }
 
     factor() {
+        const res = new ParseResult();
         const currToken = this.curr;
 
-        if (currToken.type === INT || currToken.type === FLOAT) {
-            this.step();
-            return new NumberNode(currToken);
+        if (currToken.type === PLUS || currToken.type === MINUS) {
+            res.register(this.step());
+            let factor = res.register(this.factor());
+            if (res.error !== null) return res;
+            return res.success(UnaryOpNode(currToken, factor));
+        } else if (currToken.type === INT || currToken.type === FLOAT) {
+            res.register(this.step());
+            return res.success(new NumberNode(currToken));
+        } else if (currToken.type === LPAREN) {
+            res.register(this.step());
+            let expr = res.register(this.expr());
+            if (res.error !== null) return res;
+            if (this.curr.type === RPAREN) {
+                res.register(this.step());
+                return res.success(expr);
+            } else {
+                return res.failure(
+                    new InvalidSyntaxError(
+                        this.curr.start,
+                        this.curr.end,
+                        "Expected ')'"
+                    )
+                );
+            }
         }
+
+        return res.failure(
+            new InvalidSyntaxError(
+                currToken.start,
+                currToken.end,
+                'Expected int or float'
+            )
+        );
     }
 }
 
@@ -244,5 +352,5 @@ export const run = (fileName, text) => {
     const parser = new Parser(tokens);
     const ast = parser.parse(tokens);
 
-    return [ast, null];
+    return [ast.node, ast.error];
 };
