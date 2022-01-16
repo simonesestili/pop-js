@@ -7,6 +7,7 @@ const PLUS = 'PLUS';
 const MINUS = 'MINUS';
 const MUL = 'MUL';
 const DIV = 'DIV';
+const POW = 'POW';
 const LPAREN = 'LPAREN';
 const RPAREN = 'RPAREN';
 const EOF = 'EOF';
@@ -176,6 +177,8 @@ class Lexer {
                 tokens.push(new Token(MUL, null, this.pos));
             else if (this.curr === '/')
                 tokens.push(new Token(DIV, null, this.pos));
+            else if (this.curr === '^')
+                tokens.push(new Token(POW, null, this.pos));
             else if (this.curr === '(')
                 tokens.push(new Token(LPAREN, null, this.pos));
             else if (this.curr === ')')
@@ -312,6 +315,56 @@ class Parser {
         return result;
     }
 
+    power() {
+        const res = new ParseResult();
+        let left = res.register(this.atom());
+        if (res.error !== null) return res;
+
+        while (this.curr.type === POW) {
+            let op = this.curr;
+            res.register(this.step());
+            let right = res.register(this.factor());
+            if (res.error !== null) return res;
+            left = new BinaryOpNode(left, op, right);
+        }
+
+        return res.success(left);
+    }
+
+    atom() {
+        const res = new ParseResult();
+        const currToken = this.curr;
+
+        if (currToken.type === INT || currToken.type === FLOAT) {
+            res.register(this.step());
+            return res.success(new NumberNode(currToken));
+        } else if (currToken.type === LPAREN) {
+            res.register(this.step());
+            let expr = res.register(this.expr());
+            if (res.error !== null) return res;
+            if (this.curr.type === RPAREN) {
+                res.register(this.step());
+                return res.success(expr);
+            } else {
+                return res.failure(
+                    new InvalidSyntaxError(
+                        this.curr.start,
+                        this.curr.end,
+                        "Expected ')'"
+                    )
+                );
+            }
+        }
+
+        return res.failture(
+            new InvalidSyntaxError(
+                currToken.start,
+                currToken.end,
+                "Expected int, float, '+', '-' or '('"
+            )
+        );
+    }
+
     term() {
         const res = new ParseResult();
         let left = res.register(this.factor());
@@ -353,34 +406,9 @@ class Parser {
             let factor = res.register(this.factor());
             if (res.error !== null) return res;
             return res.success(UnaryOpNode(currToken, factor));
-        } else if (currToken.type === INT || currToken.type === FLOAT) {
-            res.register(this.step());
-            return res.success(new NumberNode(currToken));
-        } else if (currToken.type === LPAREN) {
-            res.register(this.step());
-            let expr = res.register(this.expr());
-            if (res.error !== null) return res;
-            if (this.curr.type === RPAREN) {
-                res.register(this.step());
-                return res.success(expr);
-            } else {
-                return res.failure(
-                    new InvalidSyntaxError(
-                        this.curr.start,
-                        this.curr.end,
-                        "Expected ')'"
-                    )
-                );
-            }
         }
 
-        return res.failure(
-            new InvalidSyntaxError(
-                currToken.start,
-                currToken.end,
-                'Expected int or float'
-            )
-        );
+        return this.power();
     }
 }
 /*
@@ -442,6 +470,17 @@ class Number {
                 ];
             return [
                 new Number(this.value / other.value).setContext(this.context),
+                null,
+            ];
+        }
+    }
+
+    pow(other) {
+        if (other instanceof Number) {
+            return [
+                new Number(Math.pow(this.value, other.value)).setContext(
+                    this.context
+                ),
                 null,
             ];
         }
@@ -514,6 +553,7 @@ class Interpreter {
         if (node.op.type === MINUS) [res, error] = left.subtract(right);
         if (node.op.type === MUL) [res, error] = left.multiply(right);
         if (node.op.type === DIV) [res, error] = left.divide(right);
+        if (node.op.type == POW) [res, error] = left.pow(right);
 
         if (error) return rtRes.failure(error);
         return rtRes.success(res.setPos(node.start, node.end));
