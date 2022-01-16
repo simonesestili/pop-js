@@ -43,6 +43,34 @@ class InvalidSyntaxError extends Error {
     }
 }
 
+class RuntimeError extends Error {
+    constructor(start, end, details, ctx) {
+        super(start, end, 'Runtime Error', details);
+        this.context = ctx;
+    }
+
+    toString() {
+        let res = this.traceback();
+        res += `${this.name}: ${this.details}\n`;
+        return res;
+    }
+
+    traceback() {
+        let [res, pos, ctx] = [[], this.start, this.context];
+
+        while (ctx !== null) {
+            res.push(
+                `  File ${pos.fileName}, line ${pos.ln + 1}, in ${ctx.name}\n`
+            );
+            pos = ctx.parentPos;
+            ctx = ctx.parent;
+        }
+        res.reverse();
+
+        return 'Traceback (most recent call last):\n' + res.join('');
+    }
+}
+
 /*
 POSITION
 */
@@ -75,6 +103,17 @@ class Position {
             this.fileName,
             this.fileTxt
         );
+    }
+}
+
+/*
+CONTEXT
+*/
+class Context {
+    constructor(name, parent = null, parentPos = null) {
+        this.name = name;
+        this.parent = parent;
+        this.parentPos = parentPos;
     }
 }
 
@@ -179,6 +218,8 @@ NODES
 class NumberNode {
     constructor(token) {
         this.token = token;
+        this.start = this.token.start;
+        this.end = this.token.end;
     }
 
     toString() {
@@ -191,6 +232,8 @@ class BinaryOpNode {
         this.left = left;
         this.op = operator;
         this.right = right;
+        this.start = this.left.start;
+        this.end = this.right.end;
     }
 
     toString() {
@@ -202,6 +245,8 @@ class UnaryOpNode {
     constructor(op, node) {
         this.op = op;
         this.node = node;
+        this.start = this.op.start;
+        this.end = this.node.end;
     }
 
     toString() {
@@ -338,6 +383,152 @@ class Parser {
         );
     }
 }
+/*
+PRIMITIVES
+*/
+class Number {
+    constructor(value) {
+        this.value = value;
+        this.setPos();
+        this.setContext();
+    }
+
+    setPos(start = null, end = null) {
+        this.start = start;
+        this.end = end;
+        return this;
+    }
+
+    setContext(ctx) {
+        this.context = ctx;
+        return this;
+    }
+
+    add(other) {
+        if (other instanceof Number)
+            return [
+                new Number(this.value + other.value).setContext(this.context),
+                null,
+            ];
+    }
+
+    subtract(other) {
+        if (other instanceof Number)
+            return [
+                new Number(this.value - other.value).setContext(this.context),
+                null,
+            ];
+    }
+
+    multiply(other) {
+        if (other instanceof Number)
+            return [
+                new Number(this.value * other.value).setContext(this.context),
+                null,
+            ];
+    }
+
+    divide(other) {
+        if (other instanceof Number) {
+            if (other.value === 0)
+                return [
+                    null,
+                    new RuntimeError(
+                        other.start,
+                        other.end,
+                        'Division by zero',
+                        this.context
+                    ),
+                ];
+            return [
+                new Number(this.value / other.value).setContext(this.context),
+                null,
+            ];
+        }
+    }
+
+    toString() {
+        return `${this.value}`;
+    }
+}
+/*
+RUNTIME RESULT
+*/
+class RTResult {
+    constructor() {
+        this.value = null;
+        this.error = null;
+    }
+
+    register(res) {
+        if (res.error) this.error = res.error;
+        return res.value;
+    }
+
+    success(value) {
+        this.value = value;
+        return this;
+    }
+
+    failure(error) {
+        this.error = error;
+        return this;
+    }
+}
+
+/*
+INTERPRETER
+*/
+class Interpreter {
+    traverse(node, ctx) {
+        if (node instanceof NumberNode)
+            return this.traverseNumberNode(node, ctx);
+        if (node instanceof UnaryOpNode)
+            return this.traverseUnaryOpNode(node, ctx);
+        if (node instanceof BinaryOpNode)
+            return this.traverseBinaryOpNode(node, ctx);
+        return this.traverseNull(node, ctx);
+    }
+
+    traverseNull(node, ctx) {
+        return null;
+    }
+
+    traverseNumberNode(node, ctx) {
+        return new RTResult().success(
+            new Number(node.token.value)
+                .setContext(ctx)
+                .setPos(node.start, node.end)
+        );
+    }
+
+    traverseBinaryOpNode(node, ctx) {
+        let rtRes = new RTResult();
+        let left = rtRes.register(this.traverse(node.left, ctx));
+        if (rtRes.error) return rtRes;
+        let right = rtRes.register(this.traverse(node.right, ctx));
+        if (rtRes.error) return rtRes;
+        let [res, error] = [null, null];
+
+        if (node.op.type === PLUS) [res, error] = left.add(right);
+        if (node.op.type === MINUS) [res, error] = left.subtract(right);
+        if (node.op.type === MUL) [res, error] = left.multiply(right);
+        if (node.op.type === DIV) [res, error] = left.divide(right);
+
+        if (error) return rtRes.failure(error);
+        return rtRes.success(res.setPos(node.start, node.end));
+    }
+
+    traverseUnaryOpNode(node, ctx) {
+        let [rtRes, error] = [new RTResult(), null];
+        let num = rtRes.register(this.traverse(node.node, ctx));
+
+        if (node.op.type === MINUS) [num, error] = num.multiply(new Number(-1));
+
+        if (error) return rtRes.failure(error);
+        return rtRes.success(num.setPos(node.start, node.end));
+    }
+}
 
 /*
 RUN
@@ -351,6 +542,12 @@ export const run = (fileName, text) => {
     // 2) Construct abstract syntax tree
     const parser = new Parser(tokens);
     const ast = parser.parse(tokens);
+    if (ast.error) return [null, ast.error];
 
-    return [ast.node, ast.error];
+    // 3) Interpret abstract syntax tree
+    const interpreter = new Interpreter();
+    const ctx = new Context('<pop-main>');
+    let res = interpreter.traverse(ast.node, ctx);
+
+    return [res.value, res.error];
 };
