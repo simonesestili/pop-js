@@ -3,17 +3,25 @@ CONSTANTS
 */
 const INT = 'INT';
 const FLOAT = 'FLOAT';
+const IDENTIFIER = 'IDENTIFIER';
+const KEYWORD = 'KEYWORD';
 const PLUS = 'PLUS';
 const MINUS = 'MINUS';
 const MUL = 'MUL';
 const DIV = 'DIV';
 const POW = 'POW';
+const ASSIGN = 'ASSIGN';
 const LPAREN = 'LPAREN';
 const RPAREN = 'RPAREN';
 const EOF = 'EOF';
 
+const LETTERS = new Set(
+    'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('')
+);
 const DIGITS = new Set('0123456789'.split(''));
 const WHITESPACE = new Set(' \t'.split(''));
+
+const KEYWORDS = new Set(['VAR']);
 
 /*
 ERRORS
@@ -115,6 +123,12 @@ class Context {
         this.name = name;
         this.parent = parent;
         this.parentPos = parentPos;
+        this.symbolTable = null;
+    }
+
+    setTable(table) {
+        this.symbolTable = table;
+        return this;
     }
 }
 
@@ -125,15 +139,19 @@ class Token {
     constructor(type, value = null, start = null, end = null) {
         this.type = type;
         this.value = value;
-        if (this.start !== null) {
+        if (start !== null) {
             this.start = start.copy();
             this.end = start.copy();
             this.end.step();
         }
 
-        if (this.end !== null) {
+        if (end !== null) {
             this.end = end;
         }
+    }
+
+    equals(other) {
+        return this.type === other.type && this.value === other.value;
     }
 
     toString() {
@@ -169,6 +187,9 @@ class Lexer {
             if (DIGITS.has(this.curr)) {
                 tokens.push(this.parseNumber());
                 flag = false;
+            } else if (LETTERS.has(this.curr)) {
+                tokens.push(this.parseIdentifier());
+                flag = false;
             } else if (this.curr === '+')
                 tokens.push(new Token(PLUS, null, this.pos));
             else if (this.curr === '-')
@@ -179,6 +200,8 @@ class Lexer {
                 tokens.push(new Token(DIV, null, this.pos));
             else if (this.curr === '^')
                 tokens.push(new Token(POW, null, this.pos));
+            else if (this.curr === '=')
+                tokens.push(new Token(ASSIGN, null, this.pos));
             else if (this.curr === '(')
                 tokens.push(new Token(LPAREN, null, this.pos));
             else if (this.curr === ')')
@@ -197,6 +220,23 @@ class Lexer {
 
         tokens.push(new Token(EOF, null, this.pos));
         return [tokens, null];
+    }
+
+    parseIdentifier() {
+        let [strID, start] = [[], this.pos.copy()];
+
+        while (
+            this.curr !== null &&
+            (LETTERS.has(this.curr) ||
+                DIGITS.has(this.curr) ||
+                this.curr === '_')
+        ) {
+            strID.push(this.curr);
+            this.step();
+        }
+        strID = strID.join('');
+        const tokenType = KEYWORDS.has(strID) ? KEYWORD : IDENTIFIER;
+        return new Token(tokenType, strID, start, this.pos);
     }
 
     parseNumber() {
@@ -227,6 +267,23 @@ class NumberNode {
 
     toString() {
         return `${this.token}`;
+    }
+}
+
+class VariableNode {
+    constructor(tokenID) {
+        this.tokenID = tokenID;
+        this.start = this.tokenID.start;
+        this.end = this.tokenID.end;
+    }
+}
+
+class VariableAssignNode {
+    constructor(tokenID, value) {
+        this.tokenID = tokenID;
+        this.value = value;
+        this.start = this.tokenID.start;
+        this.end = this.value.end;
     }
 }
 
@@ -264,14 +321,17 @@ class ParseResult {
     constructor() {
         this.error = null;
         this.node = null;
+        this.stepCount = 0;
+    }
+
+    registerStep(res) {
+        this.stepCount++;
     }
 
     register(res) {
-        if (res instanceof ParseResult) {
-            if (res.error !== null) this.error = res.error;
-            return res.node;
-        }
-        return res;
+        this.stepCount += res.stepCount;
+        if (res.error !== null) this.error = res.error;
+        return res.node;
     }
 
     success(node) {
@@ -280,7 +340,7 @@ class ParseResult {
     }
 
     failure(error) {
-        this.error = error;
+        if (this.error === null || this.stepCount === 0) this.error = error;
         return this;
     }
 }
@@ -322,7 +382,8 @@ class Parser {
 
         while (this.curr.type === POW) {
             let op = this.curr;
-            res.register(this.step());
+            res.registerStep();
+            this.step();
             let right = res.register(this.factor());
             if (res.error !== null) return res;
             left = new BinaryOpNode(left, op, right);
@@ -336,14 +397,21 @@ class Parser {
         const currToken = this.curr;
 
         if (currToken.type === INT || currToken.type === FLOAT) {
-            res.register(this.step());
+            res.registerStep();
+            this.step();
             return res.success(new NumberNode(currToken));
+        } else if (currToken.type === IDENTIFIER) {
+            res.registerStep();
+            this.step();
+            return res.success(new VariableNode(currToken));
         } else if (currToken.type === LPAREN) {
-            res.register(this.step());
+            res.registerStep();
+            this.step();
             let expr = res.register(this.expr());
             if (res.error !== null) return res;
             if (this.curr.type === RPAREN) {
-                res.register(this.step());
+                res.registerStep();
+                this.step();
                 return res.success(expr);
             } else {
                 return res.failure(
@@ -356,11 +424,11 @@ class Parser {
             }
         }
 
-        return res.failture(
+        return res.failure(
             new InvalidSyntaxError(
                 currToken.start,
                 currToken.end,
-                "Expected int, float, '+', '-' or '('"
+                "Expected int, float, identifier, '+', '-' or '('"
             )
         );
     }
@@ -372,7 +440,8 @@ class Parser {
 
         while (this.curr.type === MUL || this.curr.type === DIV) {
             let op = this.curr;
-            res.register(this.step());
+            res.registerStep();
+            this.step();
             let right = res.register(this.factor());
             if (res.error !== null) return res;
             left = new BinaryOpNode(left, op, right);
@@ -383,14 +452,57 @@ class Parser {
 
     expr() {
         const res = new ParseResult();
+
+        if (this.curr.equals(new Token(KEYWORD, 'VAR'))) {
+            res.registerStep();
+            this.step();
+            if (this.curr.type !== IDENTIFIER) {
+                return res.failure(
+                    new InvalidSyntaxError(
+                        this.curr.start,
+                        this.curr.end,
+                        'Expected identifier'
+                    )
+                );
+            }
+
+            const varName = this.curr;
+            res.registerStep();
+            this.step();
+
+            if (this.curr.type !== ASSIGN)
+                return res.failure(
+                    new InvalidSyntaxError(
+                        this.curr.start,
+                        this.curr.end,
+                        "Expected '='"
+                    )
+                );
+
+            res.registerStep();
+            this.step();
+            const expr = res.register(this.expr());
+            if (res.error !== null) return res;
+
+            return res.success(new VariableAssignNode(varName, expr));
+        }
+
         let left = res.register(this.term());
         if (res.error !== null) return res;
 
         while (this.curr.type === PLUS || this.curr.type === MINUS) {
             let op = this.curr;
-            res.register(this.step());
+            res.registerStep();
+            this.step();
             let right = res.register(this.term());
-            if (res.error !== null) return res;
+            if (res.error !== null)
+                return res.failure(
+                    new InvalidSyntaxError(
+                        this.curr.start,
+                        this.curr.end,
+                        "Ecpected 'VAR', int, float, identifier, '+', '-', or '('"
+                    )
+                );
             left = new BinaryOpNode(left, op, right);
         }
 
@@ -402,7 +514,8 @@ class Parser {
         const currToken = this.curr;
 
         if (currToken.type === PLUS || currToken.type === MINUS) {
-            res.register(this.step());
+            res.registerStep();
+            this.step();
             let factor = res.register(this.factor());
             if (res.error !== null) return res;
             return res.success(UnaryOpNode(currToken, factor));
@@ -486,10 +599,18 @@ class Number {
         }
     }
 
+    copy() {
+        let copied = new Number(this.value);
+        copied.setPos(this.start, this.end);
+        copied.setContext(this.context);
+        return copied;
+    }
+
     toString() {
         return `${this.value}`;
     }
 }
+
 /*
 RUNTIME RESULT
 */
@@ -516,6 +637,31 @@ class RTResult {
 }
 
 /*
+SYMBOL TABLE
+*/
+class SymbolTable {
+    constructor() {
+        this.symbols = new Map();
+        this.parent = null;
+    }
+
+    get(varName) {
+        let value = this.symbols.get(varName);
+        if (value === undefined && this.parent !== null)
+            return this.parent.get(varName);
+        return value;
+    }
+
+    set(varName, value) {
+        this.symbols.set(varName, value);
+    }
+
+    remove(varName) {
+        this.symbols.delete(varName);
+    }
+}
+
+/*
 INTERPRETER
 */
 class Interpreter {
@@ -526,6 +672,10 @@ class Interpreter {
             return this.traverseUnaryOpNode(node, ctx);
         if (node instanceof BinaryOpNode)
             return this.traverseBinaryOpNode(node, ctx);
+        if (node instanceof VariableAssignNode)
+            return this.traverseVariableAssignNode(node, ctx);
+        if (node instanceof VariableNode)
+            return this.traverseVariableNode(node, ctx);
         return this.traverseNull(node, ctx);
     }
 
@@ -539,6 +689,35 @@ class Interpreter {
                 .setContext(ctx)
                 .setPos(node.start, node.end)
         );
+    }
+
+    traverseVariableNode(node, ctx) {
+        let res = new RTResult();
+        const varName = node.tokenID.value;
+        let value = ctx.symbolTable.get(varName);
+
+        if (value === undefined)
+            return res.failure(
+                new RuntimeError(
+                    node.start,
+                    node.end,
+                    `'${varName}' is not defined`,
+                    ctx
+                )
+            );
+
+        value = value.copy().setPos(node.start, node.end);
+        return res.success(value);
+    }
+
+    traverseVariableAssignNode(node, ctx) {
+        let res = new RTResult();
+        const varName = node.tokenID.value;
+        let value = res.register(this.traverse(node.value, ctx));
+        if (res.error !== null) return res;
+
+        ctx.symbolTable.set(varName, value);
+        return res.success(value);
     }
 
     traverseBinaryOpNode(node, ctx) {
@@ -573,6 +752,7 @@ class Interpreter {
 /*
 RUN
 */
+const GLOBAL = new SymbolTable();
 export const run = (fileName, text) => {
     // 1) Tokenize the input
     const lexer = new Lexer(fileName, text);
@@ -586,7 +766,7 @@ export const run = (fileName, text) => {
 
     // 3) Interpret abstract syntax tree
     const interpreter = new Interpreter();
-    const ctx = new Context('<pop-main>');
+    const ctx = new Context('<pop-main>').setTable(GLOBAL);
     let res = interpreter.traverse(ast.node, ctx);
 
     return [res.value, res.error];
