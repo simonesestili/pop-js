@@ -13,6 +13,12 @@ const POW = 'POW';
 const ASSIGN = 'ASSIGN';
 const LPAREN = 'LPAREN';
 const RPAREN = 'RPAREN';
+const EQ = 'EQ';
+const NE = 'NE';
+const LT = 'LT';
+const GT = 'GT';
+const LTE = 'LTE';
+const GTE = 'GTE';
 const EOF = 'EOF';
 
 const LETTERS = new Set(
@@ -21,7 +27,7 @@ const LETTERS = new Set(
 const DIGITS = new Set('0123456789'.split(''));
 const WHITESPACE = new Set(' \t'.split(''));
 
-const KEYWORDS = new Set(['VAR']);
+const KEYWORDS = new Set(['VAR', 'AND', 'NOT', 'OR']);
 
 /*
 ERRORS
@@ -43,6 +49,12 @@ class Error {
 class IllegalCharacterError extends Error {
     constructor(start, end, details) {
         super(start, end, 'Illegal Character', details);
+    }
+}
+
+class ExpectedCharError extends Error {
+    constructor(start, end, details) {
+        super(start, end, 'Expected Character', details);
     }
 }
 
@@ -200,8 +212,13 @@ class Lexer {
                 tokens.push(new Token(DIV, null, this.pos));
             else if (this.curr === '^')
                 tokens.push(new Token(POW, null, this.pos));
-            else if (this.curr === '=')
-                tokens.push(new Token(ASSIGN, null, this.pos));
+            else if (this.curr === '!') {
+                let [token, error] = this.parseNE();
+                if (error) return [[], error];
+                tokens.push(token);
+            } else if (this.curr === '=') tokens.push(this.parseEQ());
+            else if (this.curr === '>' || this.curr === '<')
+                tokens.push(this.parseComp());
             else if (this.curr === '(')
                 tokens.push(new Token(LPAREN, null, this.pos));
             else if (this.curr === ')')
@@ -220,6 +237,30 @@ class Lexer {
 
         tokens.push(new Token(EOF, null, this.pos));
         return [tokens, null];
+    }
+
+    parseComp() {
+        const start = this.pos.copy();
+        let type = this.curr;
+        this.step();
+        if (this.curr === '=')
+            return new Token(type === '>' ? GTE : LTE, start, this.pos);
+        return new Token(type === '>' ? GT : LT, start, this.pos);
+    }
+
+    parseEQ() {
+        const start = this.pos.copy();
+        this.step();
+
+        if (this.curr === '=') return new Token(EQ, start, this.pos);
+        return new Token(ASSIGN, start, this.pos);
+    }
+
+    parseNE() {
+        const start = this.pos.copy();
+        this.step();
+        if (this.curr === '=') return [new Token(NE, null, start), null];
+        return [null, new ExpectedCharError(start, this.pos, "'='")];
     }
 
     parseIdentifier() {
@@ -365,7 +406,7 @@ class Parser {
     parse() {
         let result = this.expr();
         if (result.error === null && this.curr.type !== EOF)
-            return res.failure(
+            return result.failure(
                 new InvalidSyntaxError(
                     this.curr.start,
                     this.curr.end,
@@ -518,7 +559,7 @@ class Parser {
             this.step();
             let factor = res.register(this.factor());
             if (res.error !== null) return res;
-            return res.success(UnaryOpNode(currToken, factor));
+            return res.success(new UnaryOpNode(currToken, factor));
         }
 
         return this.power();

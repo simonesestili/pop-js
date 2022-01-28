@@ -1,11 +1,10 @@
 import { run } from './pop.js';
 
-const commands = ['VAR simo = 0', '10 / simo'];
+const runButton = document.getElementById('run-code');
 
-for (let i = 0; i < commands.length; i++) {
-    let text = commands[i];
+runButton.onclick = () => {
+    let text = document.getElementById('line').value;
     let [res, error] = run('<stdin>', text);
-
     if (error) console.log(error.toString());
     else console.log(res.toString());
-}
+};

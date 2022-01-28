@@ -1,0 +1,89 @@
+:root {
+    --yellow: #faa916;
+    --white: #fbfffe;
+    --gray: #6d676e;
+    --black: #1b1b1e;
+    --red: #96031a;
+}
+
+* {
+    margin: 0;
+    padding: 0;
+    font-family: 'Ubuntu Mono', monospace;
+    font-size: 13pt;
+    color: var(--white);
+}
+
+body {
+    background-color: var(--black);
+}
+
+.container {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    background-color: var(--black);
+}
+
+#title {
+    font-size: 4em;
+    text-align: center;
+    padding: 40px 0;
+}
+
+.wrapped-io {
+    width: 85%;
+    display: inline-flex;
+    justify-content: space-between;
+}
+
+.CodeMirror {
+    flex: 0.49;
+}
+
+#stdout {
+    flex: 0.49;
+    padding: 10px;
+    resize: none;
+    outline: none;
+    border: none;
+    background-color: #2b2b2b;
+}
+
+#run {
+    margin-top: 15px;
+}
+
+.btn:hover {
+    transition: opacity 1s;
+    opacity: 0.8;
+}
+
+.btn {
+    display: inline-block;
+    font-weight: 400;
+    line-height: 1.5;
+    color: #212529;
+    text-align: center;
+    text-decoration: none;
+    vertical-align: middle;
+    cursor: pointer;
+    -webkit-user-select: none;
+    -moz-user-select: none;
+    user-select: none;
+    background-color: transparent;
+    border: 1px solid transparent;
+    padding: 0.375rem 0.75rem;
+    font-size: 1.5rem;
+    border-radius: 1rem;
+    transition: color 0.15s ease-in-out, background-color 0.15s ease-in-out,
+        border-color 0.15s ease-in-out, box-shadow 0.15s ease-in-out;
+    align-self: flex-end;
+    margin-right: 8%;
+}
+
+.btn-dark {
+    color: #fff;
+    background-color: #212529;
+    border-color: var(--white);
+}
