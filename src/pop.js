@@ -27,7 +27,20 @@ const LETTERS = new Set(
 const DIGITS = new Set('0123456789'.split(''));
 const WHITESPACE = new Set(' \t'.split(''));
 
-const KEYWORDS = new Set(['VAR', 'AND', 'NOT', 'OR']);
+const KEYWORDS = new Set([
+    'VAR',
+    'AND',
+    'NOT',
+    'OR',
+    'IF',
+    'DO',
+    'ELIF',
+    'ELSE',
+    'FOR',
+    'UPTO',
+    'STEP',
+    'WHILE',
+]);
 
 /*
 ERRORS
@@ -308,6 +321,18 @@ class NumberNode {
     }
 }
 
+class IfStatementNode {
+    constructor(cases, elseCase) {
+        this.cases = cases;
+        this.elseCase = elseCase;
+        this.start = this.cases[0][0].start;
+        this.end =
+            elseCase !== null
+                ? this.elseCase.end
+                : this.cases[this.cases.length - 1][0].end;
+    }
+}
+
 class VariableNode {
     constructor(tokenID) {
         this.tokenID = tokenID;
@@ -349,6 +374,27 @@ class UnaryOpNode {
 
     toString() {
         return `(${this.op}, ${this.node})`;
+    }
+}
+
+class ForNode {
+    constructor(varName, startVal, endVal, stepVal, body) {
+        this.varName = varName;
+        this.startVal = startVal;
+        this.endVal = endVal;
+        this.stepVal = stepVal;
+        this.body = body;
+        this.start = this.varName.start;
+        this.end = this.body.end;
+    }
+}
+
+class WhileNode {
+    constructor(condition, body) {
+        this.conditon = condition;
+        this.body = body;
+        this.start = this.conditon.start;
+        this.end = this.body.end;
     }
 }
 
@@ -430,6 +476,200 @@ class Parser {
         return res.success(left);
     }
 
+    ifExpr() {
+        const res = new ParseResult();
+        let [cases, elseCase] = [[], null];
+
+        if (!this.curr.equals(new Token(KEYWORD, 'IF'))) {
+            return res.failure(
+                new InvalidSyntaxError(
+                    this.curr.start,
+                    this.curr.end,
+                    "Expected 'IF'"
+                )
+            );
+        }
+
+        res.registerStep();
+        this.step();
+
+        let condition = res.register(this.expr());
+        if (res.error !== null) return res;
+
+        if (!this.curr.equals(new Token(KEYWORD, 'DO')))
+            return res.failure(
+                new InvalidSyntaxError(
+                    this.curr.start,
+                    this.curr.end,
+                    "Expected 'DO'"
+                )
+            );
+
+        res.registerStep();
+        this.step();
+
+        let expr = res.register(this.expr());
+        if (res.error !== null) return res;
+        cases.push([condition, expr]);
+
+        while (this.curr.equals(new Token(KEYWORD, 'ELIF'))) {
+            res.registerStep();
+            this.step();
+
+            let condition = res.register(this.expr());
+            if (res.error !== null) return res;
+
+            if (!this.curr.equals(KEYWORD, 'DO'))
+                return res.failure(
+                    new InvalidSyntaxError(
+                        this.curr.start,
+                        this.curr.end,
+                        "Expected 'THEN'"
+                    )
+                );
+
+            res.registerStep();
+            this.step();
+
+            let expr = res.register(this.expr());
+            if (res.error !== null) return res;
+            cases.append([condition, expr]);
+        }
+
+        if (this.curr.equals(new Token(KEYWORD, 'ELSE'))) {
+            res.registerStep();
+            this.step();
+
+            elseCase = res.register(this.expr());
+            if (res.error !== null) return res;
+        }
+
+        return res.success(new IfStatementNode(cases, elseCase));
+    }
+
+    forExpr() {
+        const res = new ParseResult();
+
+        if (!this.curr.equals(new Token(KEYWORD, 'FOR')))
+            return res.failure(
+                new InvalidSyntaxError(
+                    this.curr.start,
+                    this.curr.end,
+                    "Expected 'FOR'"
+                )
+            );
+
+        res.registerStep();
+        this.step();
+
+        if (this.curr.type !== IDENTIFIER)
+            return res.failure(
+                new InvalidSyntaxError(
+                    this.curr.start,
+                    this.curr.end,
+                    'Expected identifier'
+                )
+            );
+
+        const varName = this.curr;
+        res.registerStep();
+        this.step();
+
+        if (this.curr.type !== ASSIGN)
+            return res.failure(
+                new InvalidSyntaxError(
+                    this.curr.start,
+                    this.curr.end,
+                    "Expected '='"
+                )
+            );
+
+        res.registerStep();
+        this.step();
+
+        const startVal = res.register(this.expr());
+        if (res.error !== null) return res;
+
+        if (!this.curr.equals(new Token(KEYWORD, 'UPTO')))
+            return res.failure(
+                new InvalidSyntaxError(
+                    this.curr.start,
+                    this.curr.end,
+                    "Expected 'UPTO'"
+                )
+            );
+
+        res.registerStep();
+        this.step();
+
+        const endVal = res.register(this.expr());
+        let stepVal = null;
+        if (res.error !== null) return res;
+
+        if (this.curr.equals(new Token(KEYWORD, 'STEP'))) {
+            res.registerStep();
+            this.step();
+
+            stepVal = res.register(this.expr());
+            if (res.error !== null) return res;
+        }
+
+        if (!this.curr.equals(new Token(KEYWORD, 'DO')))
+            return res.failure(
+                new InvalidSyntaxError(
+                    this.curr.start,
+                    this.curr.end,
+                    "Expected 'DO'"
+                )
+            );
+
+        res.registerStep();
+        this.step();
+
+        const body = res.register(this.expr());
+        if (res.error !== null) return res;
+
+        return res.success(
+            new ForNode(varName, startVal, endVal, stepVal, body)
+        );
+    }
+
+    whileExpr() {
+        const res = new ParseResult();
+
+        if (!this.curr.equals(new Token(KEYWORD, 'WHILE')))
+            return res.failure(
+                new InvalidSyntaxError(
+                    this.curr.start,
+                    this.curr.end,
+                    "Expected 'WHILE'"
+                )
+            );
+
+        res.registerStep();
+        this.step();
+
+        const cond = res.register(this.expr());
+        if (res.error !== null) return res;
+
+        if (!this.curr.equals(new Token(KEYWORD, 'DO')))
+            return res.failure(
+                new InvalidSyntaxError(
+                    this.curr.start,
+                    this.curr.end,
+                    "Expected 'DO'"
+                )
+            );
+
+        res.registerStep();
+        this.step();
+
+        const body = res.register(this.expr());
+        if (res.error !== null) return res;
+
+        return res.success(new WhileNode(cond, body));
+    }
+
     atom() {
         const res = new ParseResult();
         const currToken = this.curr;
@@ -460,6 +700,18 @@ class Parser {
                     )
                 );
             }
+        } else if (currToken.equals(new Token(KEYWORD, 'IF'))) {
+            let ifExpr = res.register(this.ifExpr());
+            if (res.error !== null) return res;
+            return res.success(ifExpr);
+        } else if (currToken.equals(new Token(KEYWORD, 'FOR'))) {
+            let forExpr = res.register(this.forExpr());
+            if (res.error !== null) return res;
+            return res.success(forExpr);
+        } else if (currToken.equals(new Token(KEYWORD, 'WHILE'))) {
+            let whileExpr = res.register(this.whileExpr());
+            if (res.error !== null) return res;
+            return res.success(whileExpr);
         }
 
         return res.failure(
@@ -868,6 +1120,10 @@ class Interpreter {
             return this.traverseVariableAssignNode(node, ctx);
         if (node instanceof VariableNode)
             return this.traverseVariableNode(node, ctx);
+        if (node instanceof IfStatementNode)
+            return this.traverseIfStatementNode(node, ctx);
+        if (node instanceof ForNode) return this.traverseForNode(node, ctx);
+        if (node instanceof WhileNode) return this.traverseWhileNode(node, ctx);
         return this.traverseNull(node, ctx);
     }
 
@@ -951,6 +1207,74 @@ class Interpreter {
 
         if (error !== null) return rtRes.failure(error);
         return rtRes.success(num.setPos(node.start, node.end));
+    }
+
+    traverseIfStatementNode(node, ctx) {
+        const res = new RTResult();
+
+        for (let [cond, expr] of node.cases) {
+            cond = res.register(this.traverse(cond, ctx));
+            if (res.error !== null) return res;
+
+            if (cond.value !== 0) {
+                expr = res.register(this.traverse(expr, ctx));
+                if (res.error !== null) return res;
+                return res.success(expr);
+            }
+        }
+
+        if (node.elseCase !== null) {
+            let elseVal = res.register(this.traverse(node.elseCase, ctx));
+            if (res.error !== null) return res;
+            return res.success(elseVal);
+        }
+
+        return res.success(null);
+    }
+
+    traverseForNode(node, ctx) {
+        const res = new RTResult();
+
+        const startVal = res.register(this.traverse(node.startVal, ctx));
+        if (res.error !== null) return res;
+
+        const endVal = res.register(this.traverse(node.endVal, ctx));
+        if (res.error !== null) return res;
+
+        let stepVal = new Number(1);
+        if (node.stepVal !== null) {
+            stepVal = res.register(this.traverse(node.stepVal, ctx));
+            if (res.error !== null) return res;
+        }
+
+        let i = startVal.value;
+        const inc = stepVal.value >= 0;
+
+        while ((inc && i < endVal.value) || (!inc && i > endVal.value)) {
+            ctx.symbolTable.set(node.varName.value, new Number(i));
+            i += stepVal.val;
+
+            res.register(this.traverse(node.body, ctx));
+            if (res.error !== null) return res;
+        }
+
+        return res.success(null);
+    }
+
+    traverseWhileNode(node, ctx) {
+        const res = RTResult();
+
+        while (true) {
+            let cond = res.register(this.traverse(node.condition, ctx));
+            if (res.error !== null) return res;
+
+            if (cond === 0) break;
+
+            res.register(this.traverse(node.body, ctx));
+            if (res.error !== null) return res;
+        }
+
+        return res.success(null);
     }
 }
 

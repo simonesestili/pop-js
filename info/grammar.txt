@@ -15,3 +15,16 @@ pow              : atom (POW factor)*
 
 atom             : INT|FLOAT|IDENTIFIER
                  : LPAREN expr RPAREN
+                 : if-expr
+                 : for-expr
+                 : while-expr
+
+if-expr:         : KEYWORD:IF expr KEYWORD:DO expr
+                   (KEYWORD:ELIF expr KEYWORD:DO expr)*
+                   (KEYWORD:ELSE expr)?
+
+for-expr         : KEYWORD:FOR IDENTIFIER ASSIGN expr KEYWORD:UPTO expr
+                   (KEYWORD:STEP expr)? KEYWORD:DO expr
+
+while-expr       : KEYWORD:WHILE expr KEYWORD:DO expr
+                   
