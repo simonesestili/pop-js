@@ -828,6 +828,7 @@ runButton.onclick = () => {
 };
 
 const runCode = (line) => {
+    if (line.trim() === '') return;
     let [res, error] = run('<stdin>', line);
     if (error) stdout.value = `${error.toString()}\n`;
     else stdout.value += `${res.toString()}\n`;

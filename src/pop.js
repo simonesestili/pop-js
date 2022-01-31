@@ -46,7 +46,7 @@ class Error {
     }
 }
 
-class IllegalCharacterError extends Error {
+class IllegalCharError extends Error {
     constructor(start, end, details) {
         super(start, end, 'Illegal Character', details);
     }
@@ -226,10 +226,7 @@ class Lexer {
             else if (!WHITESPACE.has(this.curr)) {
                 let [c, start] = [this.curr, this.pos.copy()];
                 this.step();
-                return [
-                    [],
-                    new IllegalCharacterError(start, this.pos, `'${c}'`),
-                ];
+                return [[], new IllegalCharError(start, this.pos, `'${c}'`)];
             }
 
             if (flag) this.step();
@@ -491,6 +488,67 @@ class Parser {
         return res.success(left);
     }
 
+    arithExpr() {
+        const res = new ParseResult();
+        let left = res.register(this.term());
+        if (res.error !== null) return res;
+
+        const targets = new Set([PLUS, MINUS]);
+        while (targets.has(this.curr.type)) {
+            let opToken = this.curr;
+            res.registerStep();
+            this.step();
+            let right = res.register(this.term());
+            if (res.error !== null)
+                return res.failure(
+                    new InvalidSyntaxError(
+                        this.curr.start,
+                        this.curr.end,
+                        "Expected int, float, identifier, '+', '-', or '(', 'NOT'"
+                    )
+                );
+            left = new BinaryOpNode(left, opToken, right);
+        }
+
+        return res.success(left);
+    }
+
+    compExpr() {
+        const res = new ParseResult();
+
+        if (this.curr.equals(new Token(KEYWORD, 'NOT'))) {
+            const opToken = this.curr;
+            res.registerStep();
+            this.step();
+
+            let node = res.register(this.compExpr());
+            if (res.error !== null) return res;
+            return res.success(new UnaryOpNode(opToken, node));
+        }
+
+        let left = res.register(this.arithExpr());
+        if (res.error !== null) return res;
+
+        const targets = new Set([EQ, NE, LT, GT, LTE, GTE]);
+        while (targets.has(this.curr.type)) {
+            let opToken = this.curr;
+            res.registerStep();
+            this.step();
+            let right = res.register(this.arithExpr());
+            if (res.error !== null)
+                return res.failure(
+                    new InvalidSyntaxError(
+                        this.curr.start,
+                        this.curr.end,
+                        "Expected int, float, identifier, '+', '-', or '(', 'NOT'"
+                    )
+                );
+            left = new BinaryOpNode(left, opToken, right);
+        }
+
+        return res.success(left);
+    }
+
     expr() {
         const res = new ParseResult();
 
@@ -528,14 +586,19 @@ class Parser {
             return res.success(new VariableAssignNode(varName, expr));
         }
 
-        let left = res.register(this.term());
+        let left = res.register(this.compExpr());
         if (res.error !== null) return res;
 
-        while (this.curr.type === PLUS || this.curr.type === MINUS) {
+        while (
+            this.curr.type === PLUS ||
+            this.curr.type === MINUS ||
+            (this.curr.type === KEYWORD &&
+                (this.curr.value === 'AND' || this.curr.value === 'OR'))
+        ) {
             let op = this.curr;
             res.registerStep();
             this.step();
-            let right = res.register(this.term());
+            let right = res.register(this.compExpr());
             if (res.error !== null)
                 return res.failure(
                     new InvalidSyntaxError(
@@ -633,6 +696,94 @@ class Number {
         if (other instanceof Number) {
             return [
                 new Number(Math.pow(this.value, other.value)).setContext(
+                    this.context
+                ),
+                null,
+            ];
+        }
+    }
+
+    getCompEq(other) {
+        if (other instanceof Number) {
+            return [
+                new Number(+(this.value === other.value)).setContext(
+                    this.context
+                ),
+                null,
+            ];
+        }
+    }
+
+    getCompNe(other) {
+        if (other instanceof Number) {
+            return [
+                new Number(+(this.value !== other.value)).setContext(
+                    this.context
+                ),
+                null,
+            ];
+        }
+    }
+
+    getCompLt(other) {
+        if (other instanceof Number) {
+            return [
+                new Number(+(this.value < other.value)).setContext(
+                    this.context
+                ),
+                null,
+            ];
+        }
+    }
+
+    getCompLte(other) {
+        if (other instanceof Number) {
+            return [
+                new Number(+(this.value <= other.value)).setContext(
+                    this.context
+                ),
+                null,
+            ];
+        }
+    }
+
+    getCompGt(other) {
+        if (other instanceof Number) {
+            return [
+                new Number(+(this.value > other.value)).setContext(
+                    this.context
+                ),
+                null,
+            ];
+        }
+    }
+
+    getCompGte(other) {
+        if (other instanceof Number) {
+            return [
+                new Number(+(this.value >= other.value)).setContext(
+                    this.context
+                ),
+                null,
+            ];
+        }
+    }
+
+    getAnd(other) {
+        if (other instanceof Number) {
+            return [
+                new Number(+(this.value === 1 && other.value === 1)).setContext(
+                    this.context
+                ),
+                null,
+            ];
+        }
+    }
+
+    getOr(other) {
+        if (other instanceof Number) {
+            return [
+                new Number(+(this.value === 1 || other.value === 1)).setContext(
                     this.context
                 ),
                 null,
@@ -773,7 +924,17 @@ class Interpreter {
         if (node.op.type === MINUS) [res, error] = left.subtract(right);
         if (node.op.type === MUL) [res, error] = left.multiply(right);
         if (node.op.type === DIV) [res, error] = left.divide(right);
-        if (node.op.type == POW) [res, error] = left.pow(right);
+        if (node.op.type === POW) [res, error] = left.pow(right);
+        if (node.op.type === EQ) [res, error] = left.getCompEq(right);
+        if (node.op.type === NE) [res, error] = left.getCompNe(right);
+        if (node.op.type === LT) [res, error] = left.getCompLt(right);
+        if (node.op.type === LTE) [res, error] = left.getCompLte(right);
+        if (node.op.type === GT) [res, error] = left.getCompGt(right);
+        if (node.op.type === GTE) [res, error] = left.getCompGte(right);
+        if (node.op.equals(new Token(KEYWORD, 'AND')))
+            [res, error] = left.getAnd(right);
+        if (node.op.equals(new Token(KEYWORD, 'OR')))
+            [res, error] = left.getOr(right);
 
         if (error) return rtRes.failure(error);
         return rtRes.success(res.setPos(node.start, node.end));
@@ -782,10 +943,13 @@ class Interpreter {
     traverseUnaryOpNode(node, ctx) {
         let [rtRes, error] = [new RTResult(), null];
         let num = rtRes.register(this.traverse(node.node, ctx));
+        if (rtRes.error !== null) return rtRes;
 
         if (node.op.type === MINUS) [num, error] = num.multiply(new Number(-1));
+        if (node.op.equals(new Token(KEYWORD, 'NOT')))
+            [num, error] = num.negate();
 
-        if (error) return rtRes.failure(error);
+        if (error !== null) return rtRes.failure(error);
         return rtRes.success(num.setPos(node.start, node.end));
     }
 }

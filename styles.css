@@ -75,7 +75,7 @@ body {
     border: 1px solid transparent;
     padding: 0.375rem 0.75rem;
     font-size: 1.5rem;
-    border-radius: 1rem;
+    border-radius: 1.5rem;
     transition: color 0.15s ease-in-out, background-color 0.15s ease-in-out,
         border-color 0.15s ease-in-out, box-shadow 0.15s ease-in-out;
     align-self: flex-end;
@@ -85,5 +85,5 @@ body {
 .btn-dark {
     color: #fff;
     background-color: #212529;
-    border-color: var(--white);
+    border-color: #212529;
 }
