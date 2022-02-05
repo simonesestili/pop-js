@@ -856,7 +856,7 @@ class Parser {
                     new InvalidSyntaxError(
                         this.curr.start,
                         this.curr.end,
-                        "Ecpected 'VAR', int, float, identifier, '+', '-', or '('"
+                        "Expected 'VAR', int, float, identifier, '+', '-', or '('"
                     )
                 );
             left = new BinaryOpNode(left, op, right);
@@ -1252,6 +1252,7 @@ class Interpreter {
 
         while ((inc && i < endVal.value) || (!inc && i > endVal.value)) {
             ctx.symbolTable.set(node.varName.value, new Number(i));
+            console.log(i);
             i += stepVal.val;
 
             res.register(this.traverse(node.body, ctx));
@@ -1287,6 +1288,7 @@ export const run = (fileName, text) => {
     const lexer = new Lexer(fileName, text);
     const [tokens, error] = lexer.makeTokens();
     if (error) return [null, error];
+    console.log(tokens);
 
     // 2) Construct abstract syntax tree
     const parser = new Parser(tokens);
